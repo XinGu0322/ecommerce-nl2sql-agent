@@ -1,0 +1,6 @@
+[project]
+name = "ecommerce-nl2sql-agent"
+version = "0.1.0"
+description = "An ecommerce NL2SQL agent built from scratch"
+requires-python = ">=3.13"
+dependencies = []
