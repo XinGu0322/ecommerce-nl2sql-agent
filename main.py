@@ -1,16 +1,15 @@
-# 这是一个示例 Python 脚本。
+from fastapi import FastAPI
 
-# 按 Shift+F10 执行或将其替换为您的代码。
-# 按 双击 Shift 在所有地方搜索类、文件、工具窗口、操作和设置。
+app = FastAPI(
+    title="ecommerce-nl2sql-agent",
+    description="An ecommerce NL2SQL agent built from scratch",
+    version="0.1.0",
+    redoc_url=None,
+)
 
-
-def print_hi(name):
-    # 在下面的代码行中使用断点来调试脚本。
-    print(f'Hi, {name}')  # 按 Ctrl+F8 切换断点。
-
-
-# 按装订区域中的绿色按钮以运行脚本。
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# 访问 https://www.jetbrains.com/help/pycharm/ 获取 PyCharm 帮助
+@app.get("/health")
+def health_check() -> dict[str,str]:
+    return {
+        "status": "OK",
+        "service": "ecommerce-nl2sql-agent",
+    }
