@@ -1,0 +1,19 @@
+app:
+  name: ecommerce-nl2sql-agent
+  environment: development
+
+server:
+  host: 127.0.0.1
+  port: 8000
+
+mysql:
+  host: 127.0.0.1
+  port: 3307
+
+qdrant:
+  host: 127.0.0.1
+  port: 6333
+
+elasticsearch:
+  host: 127.0.0.1
+  port: 9200
