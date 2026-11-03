@@ -7,3 +7,5 @@ __pycache__/
 .env.*
 !.env.example
 *.log
+# Local embedding model weights
+docker/embedding/bge-large-zh-v1.5/
