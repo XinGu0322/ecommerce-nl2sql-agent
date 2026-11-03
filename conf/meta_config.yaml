@@ -1,0 +1,61 @@
+
+tables:
+  fact_order: 订单事实表，记录订单金额、数量及各维度关联
+  dim_customer: 客户维度表，记录客户和会员等级
+  dim_product: 商品维度表，记录商品名称、类别及品牌
+  dim_region: 地区维度表，记录销售省份和大区
+  dim_date: 日期维度表，记录年、季度、月和日
+
+columns:
+  fact_order.order_id: 订单唯一编号
+  fact_order.customer_id: 客户编号，关联客户维度表
+  fact_order.product_id: 商品编号，关联商品维度表
+  fact_order.date_id: 订单日期编号，关联日期维度表
+  fact_order.region_id: 地区编号，关联地区维度表
+  fact_order.order_quantity: 订单购买商品数量
+  fact_order.order_amount: 订单成交总金额，不需要再乘以购买数量
+
+  dim_customer.customer_id: 客户唯一编号
+  dim_customer.customer_name: 客户姓名
+  dim_customer.gender: 客户性别
+  dim_customer.member_level: 客户会员等级
+
+  dim_product.product_id: 商品唯一编号
+  dim_product.product_name: 商品名称
+  dim_product.category: 商品类别
+  dim_product.brand: 商品品牌
+
+  dim_region.region_id: 地区唯一编号
+  dim_region.province: 省份名称
+  dim_region.region_name: 销售大区名称
+  dim_region.country: 国家名称
+
+  dim_date.date_id: 日期编号，格式为YYYYMMDD
+  dim_date.year: 年份
+  dim_date.quarter: 季度
+  dim_date.month: 月份
+  dim_date.day: 日期中的日
+
+aliases:
+  fact_order.order_amount: [销售额, 销售金额, 订单金额, 成交金额]
+  fact_order.order_quantity: [销量, 销售数量, 购买数量]
+  fact_order.order_id: [订单, 订单编号]
+  dim_region.region_name: [地区, 大区, 区域]
+  dim_product.category: [品类, 商品分类]
+  dim_product.brand: [品牌]
+  dim_customer.member_level: [会员等级, 会员级别]
+
+metrics:
+  total_sales:
+    name: 销售总额
+    description: 对符合筛选条件的订单成交金额求和
+    expression: SUM(fact_order.order_amount)
+    aliases: [总销售额, 销售金额, 成交总额]
+    depends_on: [fact_order.order_amount]
+
+  order_count:
+    name: 订单总数
+    description: 统计符合条件的订单记录数量
+    expression: COUNT(fact_order.order_id)
+    aliases: [订单数量, 订单量, 下单笔数]
+    depends_on: [fact_order.order_id]
