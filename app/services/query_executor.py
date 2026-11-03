@@ -34,7 +34,7 @@ class QueryExecutionResult:
     metric_id: str
     value: str | int | None
     sql: str
-    params: dict[str, str]
+    params: dict[str, str | int]
     rows: list[dict] | None = None
 
 

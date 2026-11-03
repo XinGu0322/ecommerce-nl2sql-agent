@@ -48,11 +48,12 @@ class QueryIntent(BaseModel):
     needs_clarification: bool = False
 
 
+
 def extract_search_terms(
     question: str,
     intent: QueryIntent,
 ) -> list[str]:
-    """校验抽取词确实来自原问题，并去重。"""
+    """验证模型抽取的实体与时间确实来自用户问题。"""
 
     terms = []
 
@@ -65,4 +66,15 @@ def extract_search_terms(
         if item.text not in terms:
             terms.append(item.text)
 
+    # 时间表达必须来自用户原文，不能由模型凭空添加
+    if (
+        intent.time_expression
+        and intent.time_expression not in question
+    ):
+        raise ValueError(
+            "模型输出了原问题中不存在的时间表达："
+            f"{intent.time_expression}"
+        )
+
     return terms
+

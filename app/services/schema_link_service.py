@@ -3,7 +3,7 @@ import json
 
 from app.repositories.meta_repository import MetaRepository
 from app.services.grouping_contract import GROUP_FIELDS
-
+from app.services.year_filter import parse_explicit_year
 
 class SchemaLinkError(ValueError):
     """业务元数据不足或存在歧义，无法形成可靠查询计划。"""
@@ -55,10 +55,19 @@ class SchemaLinkService:
                 "查询条件存在缺失或歧义"
             )
 
-        if intent.get("time_expression"):
-            raise SchemaLinkError(
-                "当前阶段暂不支持时间范围过滤"
-            )
+
+        # 当前先支持明确年份过滤
+        time_expression = intent.get("time_expression")
+        year = None
+
+        if time_expression:
+            try:
+                year = parse_explicit_year(time_expression)
+            except ValueError as exc:
+                raise SchemaLinkError(
+                    f"暂不支持的时间表达：{time_expression}"
+                ) from exc
+
 
         # 2. 解析分组要求
         requested_groups = intent.get("group_by") or []
@@ -267,6 +276,42 @@ class SchemaLinkService:
                     "field_id": field_id,
                     "values": values,
                 })
+
+
+        # 9. 添加已解析的年份条件
+        if year is not None:
+            year_field = "dim_date.year"
+
+            if year_field not in columns:
+                raise SchemaLinkError(
+                    "元数据中不存在年份字段"
+                )
+
+            filters.append({
+                "field_id": year_field,
+                "value": year,
+            })
+
+        # 10. 根据筛选字段确定所需维度表
+        target_tables = {
+            columns[item["field_id"]]["table_id"]
+            for item in filters
+        } - {fact_table}
+
+        # 分组字段也必须加入所需表
+        for field_id in group_by:
+            if field_id not in columns:
+                raise SchemaLinkError(
+                    f"分组字段不存在：{field_id}"
+                )
+
+            table_id = columns[field_id]["table_id"]
+
+            if table_id != fact_table:
+                target_tables.add(table_id)
+
+        # 后面的真实外键 JOIN 规划保持不变
+
 
         # 9. 根据筛选字段确定所需维度表
         target_tables = {

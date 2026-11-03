@@ -26,7 +26,7 @@ class SQLCompilationError(ValueError):
 @dataclass(frozen=True)
 class BoundQuery:
     sql: str
-    params: dict[str, str]
+    params: dict[str, str | int]
 
 
 def quote_identifier(name: str) -> str:
@@ -219,7 +219,7 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
 
     # 6. 构建参数化 WHERE 条件
     conditions = []
-    params: dict[str, str] = {}
+    params: dict[str, str | int] = {}
     seen_filter_fields = set()
 
     for item in plan["filters"]:
@@ -248,13 +248,24 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
                 "筛选条件必须且只能包含 value 或 values"
             )
 
+
         # 6.1 单值等值筛选
         if has_value:
             value = item["value"]
 
-            if not isinstance(value, str):
+            if field_id == "dim_date.year":
+                # 年份只能是整数，不能是字符串或布尔值
+                if (
+                    type(value) is not int
+                    or not 1900 <= value <= 2099
+                ):
+                    raise SQLCompilationError(
+                        "年份筛选必须是1900至2099之间的整数"
+                    )
+
+            elif not isinstance(value, str):
                 raise SQLCompilationError(
-                    "单值筛选只支持字符串"
+                    "普通单值筛选只支持字符串"
                 )
 
             param_name = f"filter_{len(params)}"
@@ -268,6 +279,9 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
         # 6.2 同字段多值 IN 筛选
         else:
             values = item["values"]
+
+            # 此处继续保留你现有的多值筛选代码
+
 
             if (
                 not isinstance(values, list)
