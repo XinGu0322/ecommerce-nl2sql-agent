@@ -129,3 +129,39 @@ class MetaRepository:
                     dependency,
                 )
 
+
+    async def get_index_sources(self) -> dict[str, list[dict]]:
+        """读取需要建立向量索引的元数据。"""
+
+        queries = {
+            "table": """
+                SELECT id, name, description, aliases, table_role
+                FROM table_info
+                ORDER BY id
+            """,
+            "column": """
+                SELECT id, name, table_id, data_type,
+                       column_role, description, aliases,
+                       referenced_table, referenced_column
+                FROM column_info
+                ORDER BY id
+            """,
+            "metric": """
+                SELECT id, name, description, expression, aliases
+                FROM metric_info
+                ORDER BY id
+            """,
+        }
+
+        sources = {}
+
+        async with self.meta_engine.connect() as connection:
+            for kind, sql in queries.items():
+                result = await connection.execute(text(sql))
+                sources[kind] = [
+                    dict(row) for row in result.mappings()
+                ]
+
+        return sources
+
+
