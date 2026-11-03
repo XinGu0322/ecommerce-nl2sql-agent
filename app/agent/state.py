@@ -1,0 +1,12 @@
+
+from typing import Any, TypedDict
+
+
+class QueryState(TypedDict, total=False):
+    question: str
+    search_terms: list[str]
+
+    metadata_hits: list[dict[str, Any]]
+    value_hits: list[dict[str, Any]]
+
+    evidence: dict[str, Any]
