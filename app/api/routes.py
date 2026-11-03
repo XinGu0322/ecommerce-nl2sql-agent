@@ -16,7 +16,7 @@ from app.api.schemas import (
 )
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("nl2sql.api")
 
 router = APIRouter(
     prefix="/api/v1",
