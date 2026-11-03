@@ -4,6 +4,7 @@ import logging
 
 from fastapi import (
     APIRouter,
+    Depends,
     HTTPException,
     Request,
 )
@@ -14,6 +15,7 @@ from app.api.schemas import (
     QueryRequest,
     QueryResponse,
 )
+from app.api.security import require_query_access
 
 
 logger = logging.getLogger("nl2sql.api")
@@ -29,6 +31,9 @@ REQUEST_TIMEOUT_SECONDS = 90
 @router.post(
     "/query",
     response_model=QueryResponse,
+    dependencies=[
+        Depends(require_query_access)
+    ],
     summary="执行自然语言问数",
 )
 async def query(

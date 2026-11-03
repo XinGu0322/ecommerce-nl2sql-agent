@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 
@@ -9,6 +8,10 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 
 from app.api.routes import router
+from app.api.security import (
+    SlidingWindowRateLimiter,
+    load_service_api_key,
+)
 from app.observability import (
     configure_logging,
     reset_request_id,
@@ -18,6 +21,9 @@ from app.runtime import create_query_runtime
 
 
 MAX_CONCURRENT_QUERIES = 4
+
+RATE_LIMIT_REQUESTS = 30
+RATE_LIMIT_WINDOW_SECONDS = 60
 
 
 def create_app(
@@ -39,23 +45,55 @@ def create_app(
     logger = logging.getLogger("nl2sql.http")
 
     # 2. 应用生命周期
+
+    # 2. 应用生命周期
     @asynccontextmanager
     async def lifespan(app: FastAPI):
 
-        async with runtime_factory() as query_graph:
+        # 服务启动时先检查鉴权配置
+        # 缺少有效 API Key 时直接启动失败
+        app.state.api_key = load_service_api_key()
 
-            app.state.query_graph = query_graph
-
-            app.state.query_semaphore = asyncio.Semaphore(
-                MAX_CONCURRENT_QUERIES
+        # 整个服务进程共享一个限流器
+        app.state.query_rate_limiter = (
+            SlidingWindowRateLimiter(
+                limit=RATE_LIMIT_REQUESTS,
+                window_seconds=RATE_LIMIT_WINDOW_SECONDS,
             )
+        )
 
-            try:
-                yield
+        try:
+            # 原有的 LangGraph Runtime 保持不变
+            async with runtime_factory() as query_graph:
 
-            finally:
-                app.state.query_graph = None
-                app.state.query_semaphore = None
+                app.state.query_graph = query_graph
+
+                app.state.query_semaphore = (
+                    asyncio.Semaphore(
+                        MAX_CONCURRENT_QUERIES
+                    )
+                )
+
+                try:
+                    yield
+
+                finally:
+                    app.state.query_graph = None
+                    app.state.query_semaphore = None
+
+        finally:
+            # 服务退出时清理鉴权与限流状态
+            app.state.api_key = None
+            app.state.query_rate_limiter = None
+
+    # 3. 创建 FastAPI 应用
+    app = FastAPI(
+        title="Ecommerce NL2SQL Agent API",
+        description="基于 LangGraph 的电商自然语言问数服务",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+
 
     # 3. 创建 FastAPI 应用
     app = FastAPI(

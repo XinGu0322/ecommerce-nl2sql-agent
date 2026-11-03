@@ -6,6 +6,18 @@ from fastapi.testclient import TestClient
 
 from app.main import create_app
 
+TEST_API_KEY = (
+    "local-test-api-key-1234567890-abcdefghij"
+)
+
+
+@pytest.fixture(autouse=True)
+def configure_test_api_key(monkeypatch):
+    monkeypatch.setenv(
+        "NL2SQL_API_KEY",
+        TEST_API_KEY,
+    )
+
 
 class FakeGraph:
     """用于 API 测试的查询工作流。"""
@@ -46,7 +58,10 @@ def make_test_app(result, should_fail=False):
 def test_health_live():
     app, _ = make_test_app({})
 
-    with TestClient(app) as client:
+    with TestClient(
+            app,
+            headers={"X-API-Key": TEST_API_KEY},
+    ) as client:
         response = client.get("/health/live")
 
     assert response.status_code == 200
@@ -65,7 +80,10 @@ def test_single_metric_query():
         },
     })
 
-    with TestClient(app) as client:
+    with TestClient(
+            app,
+            headers={"X-API-Key": TEST_API_KEY},
+    ) as client:
         response = client.post(
             "/api/v1/query",
             json={
@@ -112,7 +130,10 @@ def test_grouped_query():
         },
     })
 
-    with TestClient(app) as client:
+    with TestClient(
+            app,
+            headers={"X-API-Key": TEST_API_KEY},
+    ) as client:
         response = client.post(
             "/api/v1/query",
             json={
@@ -142,7 +163,10 @@ def test_business_rejection(status):
         "error": "当前查询条件无法处理",
     })
 
-    with TestClient(app) as client:
+    with TestClient(
+            app,
+            headers={"X-API-Key": TEST_API_KEY},
+    ) as client:
         response = client.post(
             "/api/v1/query",
             json={"question": "一个无法处理的查询"},
@@ -163,7 +187,10 @@ def test_execution_failure():
         "error": "内部数据库异常详情",
     })
 
-    with TestClient(app) as client:
+    with TestClient(
+            app,
+            headers={"X-API-Key": TEST_API_KEY},
+    ) as client:
         response = client.post(
             "/api/v1/query",
             json={"question": "查询销售额"},
@@ -183,7 +210,10 @@ def test_execution_failure():
 def test_empty_question_rejected():
     app, graph = make_test_app({})
 
-    with TestClient(app) as client:
+    with TestClient(
+            app,
+            headers={"X-API-Key": TEST_API_KEY},
+    ) as client:
         response = client.post(
             "/api/v1/query",
             json={"question": "   "},
@@ -201,7 +231,10 @@ def test_unexpected_error_hidden():
         should_fail=True,
     )
 
-    with TestClient(app) as client:
+    with TestClient(
+            app,
+            headers={"X-API-Key": TEST_API_KEY},
+    ) as client:
         response = client.post(
             "/api/v1/query",
             json={"question": "查询销售额"},

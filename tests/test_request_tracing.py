@@ -49,7 +49,16 @@ def make_api_app():
     )
 
 
-def test_request_id_and_http_log():
+def test_request_id_and_http_log(monkeypatch):
+    test_api_key = (
+        "local-test-api-key-1234567890-abcdefghij"
+    )
+
+    monkeypatch.setenv(
+        "NL2SQL_API_KEY",
+        test_api_key,
+    )
+
     app = make_api_app()
 
     logger = logging.getLogger("nl2sql.http")
@@ -58,7 +67,10 @@ def test_request_id_and_http_log():
     logger.addHandler(collector)
 
     try:
-        with TestClient(app) as client:
+        with TestClient(
+                app,
+                headers={"X-API-Key": test_api_key},
+        ) as client:
             first = client.post(
                 "/api/v1/query",
                 json={
