@@ -50,7 +50,7 @@ metrics:
     name: 销售总额
     description: 对符合筛选条件的订单成交金额求和
     expression: SUM(fact_order.order_amount)
-    aliases: [总销售额, 销售金额, 成交总额]
+    aliases: [总销售额, 销售额, 销售金额, 成交总额]
     depends_on: [fact_order.order_amount]
 
   order_count:

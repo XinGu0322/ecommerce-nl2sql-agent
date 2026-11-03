@@ -1,3 +1,4 @@
+MAX_GROUP_ROWS = 100
 
 import re
 from dataclasses import dataclass
@@ -180,6 +181,52 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
         sql_parts.append(
             "WHERE " + " AND ".join(conditions)
         )
+
+
+    # 4. 处理年月分组
+    group_by = plan.get("group_by") or []
+
+    if group_by:
+        expected_group = [
+            "dim_date.year",
+            "dim_date.month",
+        ]
+
+        if group_by != expected_group:
+            raise SQLCompilationError(
+                "当前仅支持按年份和月份分组"
+            )
+
+        if "dim_date" not in joined_tables:
+            raise SQLCompilationError(
+                "月份分组缺少 dim_date JOIN"
+            )
+
+        year_field = quote_field("dim_date.year")
+        month_field = quote_field("dim_date.month")
+
+        # 原先 SELECT 只有一个指标；
+        # 分组查询需要同时返回年份、月份和指标。
+        sql_parts[0] = (
+            f"SELECT {year_field} AS `year`, "
+            f"{month_field} AS `month`, "
+            f"{metric_sql} AS {metric_id}"
+        )
+
+        sql_parts.append(
+            f"GROUP BY {year_field}, {month_field}"
+        )
+
+        sql_parts.append(
+            f"ORDER BY {year_field} ASC, "
+            f"{month_field} ASC"
+        )
+
+        # 多取一行，方便执行器判断是否超过上限
+        sql_parts.append(
+            f"LIMIT {MAX_GROUP_ROWS + 1}"
+        )
+
 
     return BoundQuery(
         sql="\n".join(sql_parts),

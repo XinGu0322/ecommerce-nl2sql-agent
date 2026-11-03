@@ -122,7 +122,23 @@ async def main(question: str) -> int:
 
             print("\n识别指标：", intent.get("metric"))
             print("确定指标：", schema_plan["metric"]["id"])
-            print("查询结果：", execution["value"])
+
+            if execution.get("rows") is not None:
+                print("\n分组查询结果：")
+
+                for row in execution["rows"]:
+                    print(
+                        f"{row['year']}-"
+                        f"{row['month']:02d} | "
+                        f"{execution['metric_id']} = "
+                        f"{row[execution['metric_id']]}"
+                    )
+
+                if not execution["rows"]:
+                    print("没有符合条件的数据")
+            else:
+                print("查询结果：", execution["value"])
+
 
             print("\n执行 SQL：")
             print(execution["sql"])

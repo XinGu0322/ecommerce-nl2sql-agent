@@ -6,12 +6,15 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.services.sql_compiler import compile_schema_plan
+from app.services.sql_compiler import (
+    MAX_GROUP_ROWS,
+    compile_schema_plan,
+)
 from app.services.sql_validator import validate_sql
 
 
 class QueryExecutionError(RuntimeError):
-    """数据库查询失败或返回结果不符合当前查询契约。"""
+    """查询执行或结果契约不符合要求。"""
 
 
 @dataclass(frozen=True)
@@ -21,6 +24,27 @@ class QueryExecutionResult:
     sql: str
     params: dict[str, str]
 
+    # 分组查询使用 rows；
+    # 普通聚合查询仍使用 value。
+    rows: list[dict] | None = None
+
+
+def normalize_numeric(value):
+    """保持 Decimal 精度，统一数值输出。"""
+
+    if isinstance(value, Decimal):
+        return str(value)
+
+    if type(value) is int:
+        return value
+
+    if value is None:
+        return None
+
+    raise QueryExecutionError(
+        f"不支持的查询结果类型：{type(value).__name__}"
+    )
+
 
 class QueryExecutor:
     def __init__(
@@ -29,7 +53,9 @@ class QueryExecutor:
         timeout_ms: int = 5000,
     ):
         if not 100 <= timeout_ms <= 60000:
-            raise ValueError("查询超时必须在100到60000毫秒之间")
+            raise ValueError(
+                "查询超时必须在100到60000毫秒之间"
+            )
 
         self.engine = engine
         self.timeout_ms = timeout_ms
@@ -38,28 +64,22 @@ class QueryExecutor:
         self,
         schema_plan: dict,
     ) -> QueryExecutionResult:
-        """
-        执行经过 Schema Linking 的单指标聚合查询。
 
-        不接收用户或 LLM 直接传入的原始 SQL。
-        """
-
-        # 1. 根据业务计划编译 SQL
+        # 1. 编译和校验必须在数据库连接之前完成
         compiled = compile_schema_plan(schema_plan)
 
-        # 2. 重新进行 AST 与业务计划一致性校验
         validated = validate_sql(
             compiled.sql,
             schema_plan,
         )
 
         metric_id = schema_plan["metric"]["id"]
+        grouped = bool(schema_plan.get("group_by"))
 
-        # 3. 使用独立只读连接执行
         try:
             async with self.engine.connect() as connection:
 
-                # 设置当前连接的 SELECT 执行时间限制
+                # 2. 限制 SELECT 执行时间
                 await connection.execute(
                     text(
                         "SET SESSION max_execution_time = "
@@ -68,39 +88,81 @@ class QueryExecutor:
                     {"timeout_ms": self.timeout_ms},
                 )
 
+                # 3. 参数化执行
                 result = await connection.execute(
                     text(validated.sql),
                     validated.params,
                 )
 
-                # 当前业务仅支持单指标、无 GROUP BY
+                # 4. 分组聚合查询
+                if grouped:
+                    expected_columns = [
+                        "year",
+                        "month",
+                        metric_id,
+                    ]
+
+                    if list(result.keys()) != expected_columns:
+                        raise QueryExecutionError(
+                            "分组查询结果列不符合预期"
+                        )
+
+                    raw_rows = result.mappings().fetchmany(
+                        MAX_GROUP_ROWS + 1
+                    )
+
+                    if len(raw_rows) > MAX_GROUP_ROWS:
+                        raise QueryExecutionError(
+                            "分组结果超过允许的最大行数"
+                        )
+
+                    rows = []
+
+                    for row in raw_rows:
+                        year = row["year"]
+                        month = row["month"]
+
+                        if (
+                            type(year) is not int
+                            or type(month) is not int
+                            or not 1 <= month <= 12
+                        ):
+                            raise QueryExecutionError(
+                                "日期分组结果不合法"
+                            )
+
+                        rows.append({
+                            "year": year,
+                            "month": month,
+                            metric_id: normalize_numeric(
+                                row[metric_id]
+                            ),
+                        })
+
+                    return QueryExecutionResult(
+                        metric_id=metric_id,
+                        value=None,
+                        sql=validated.sql,
+                        params=dict(validated.params),
+                        rows=rows,
+                    )
+
+                # 5. 保留原来的单值聚合行为
                 if list(result.keys()) != [metric_id]:
                     raise QueryExecutionError(
                         "查询返回的指标列与业务计划不一致"
                     )
 
-                # 最多读取两行，用于检查当前结果契约
-                rows = result.mappings().fetchmany(2)
+                raw_rows = result.mappings().fetchmany(2)
 
-                if len(rows) != 1:
+                if len(raw_rows) != 1:
                     raise QueryExecutionError(
                         "单指标聚合查询必须返回一行"
                     )
 
-                raw_value = rows[0][metric_id]
-
-                if isinstance(raw_value, Decimal):
-                    # 金额不能随意转成 float
-                    value = str(raw_value)
-                elif isinstance(raw_value, int):
-                    value = raw_value
-                elif raw_value is None:
-                    # SUM 在没有匹配记录时可能返回 NULL
-                    value = None
-                else:
-                    raise QueryExecutionError(
-                        "查询结果不是预期的数值类型"
-                    )
+                value = normalize_numeric(
+                    raw_rows[0][metric_id]
+                )
 
                 return QueryExecutionResult(
                     metric_id=metric_id,

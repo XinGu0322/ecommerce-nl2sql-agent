@@ -36,10 +36,30 @@ class SchemaLinkService:
 
         unsupported = [
             key for key in (
-                "time_expression", "group_by", "sort", "limit"
+                "time_expression", "sort", "limit"
             )
             if intent.get(key)
         ]
+
+        if unsupported:
+            raise SchemaLinkError(
+                f"当前阶段暂不支持：{unsupported}"
+            )
+
+        requested_groups = intent.get("group_by") or []
+
+        if requested_groups and requested_groups != ["月份"]:
+            raise SchemaLinkError(
+                f"当前仅支持按月份分组：{requested_groups}"
+            )
+
+        group_by = []
+
+        if requested_groups:
+            group_by = [
+                "dim_date.year",
+                "dim_date.month",
+            ]
 
         if unsupported:
             raise SchemaLinkError(
@@ -151,6 +171,17 @@ class SchemaLinkService:
             for item in filters
         } - {fact_table}
 
+        # 分组字段也必须参与 Schema Linking
+        for field_id in group_by:
+            if field_id not in columns:
+                raise SchemaLinkError(
+                    f"分组字段不存在：{field_id}"
+                )
+
+            target_tables.add(
+                columns[field_id]["table_id"]
+            )
+
         joins = []
 
         for target_table in sorted(target_tables):
@@ -201,4 +232,5 @@ class SchemaLinkService:
             ],
             "joins": joins,
             "filters": filters,
+            "group_by": group_by,
         }

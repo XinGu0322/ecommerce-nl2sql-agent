@@ -62,6 +62,8 @@ def test_compile_query(schema_plan):
 
     assert "SUM(" in query.sql
     assert "INNER JOIN" in query.sql
+    assert "INNER JOIN `dim_product`" in query.sql
+    assert "INNER JOIN `dim_region`" in query.sql
 
     assert query.params == {
         "filter_0": "华北",
@@ -134,3 +136,31 @@ def test_multiple_statements_rejected(schema_plan):
             query.sql + "; SELECT 1",
             schema_plan,
         )
+
+
+def test_monthly_group_compilation(schema_plan):
+    plan = deepcopy(schema_plan)
+
+    plan["group_by"] = [
+        "dim_date.year",
+        "dim_date.month",
+    ]
+
+    plan["required_tables"].append("dim_date")
+
+    plan["joins"].append({
+        "left_table": "fact_order",
+        "left_column": "date_id",
+        "right_table": "dim_date",
+        "right_column": "date_id",
+    })
+
+    compiled = compile_schema_plan(plan)
+
+    assert "INNER JOIN `dim_date`" in compiled.sql
+    assert "GROUP BY" in compiled.sql
+    assert "ORDER BY" in compiled.sql
+    assert "LIMIT 101" in compiled.sql
+
+    validate_sql(compiled.sql, plan)
+

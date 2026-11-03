@@ -55,6 +55,33 @@ class FakeMetaRepository:
             },
         ]
 
+
+        self.columns.extend([
+            {
+                "id": "fact_order.date_id",
+                "table_id": "fact_order",
+                "name": "date_id",
+                "referenced_table": "dim_date",
+                "referenced_column": "date_id",
+            },
+            {
+                "id": "dim_date.date_id",
+                "table_id": "dim_date",
+                "name": "date_id",
+            },
+            {
+                "id": "dim_date.year",
+                "table_id": "dim_date",
+                "name": "year",
+            },
+            {
+                "id": "dim_date.month",
+                "table_id": "dim_date",
+                "name": "month",
+            },
+        ])
+
+
         if remove_region_fk:
             self.columns = [
                 column for column in self.columns
@@ -67,13 +94,19 @@ class FakeMetaRepository:
                 {
                     "name": "fact_order",
                     "table_role": "fact",
+
                 },
+
                 {
                     "name": "dim_region",
                     "table_role": "dimension",
                 },
                 {
                     "name": "dim_product",
+                    "table_role": "dimension",
+                },
+                {
+                    "name": "dim_date",
                     "table_role": "dimension",
                 },
             ],
@@ -184,12 +217,18 @@ def test_missing_join_rejected():
 
 def test_unsupported_group_by_rejected():
     intent = make_intent()
-    intent["group_by"] = ["月份"]
+    intent["group_by"] = ["季度"]
 
     service = SchemaLinkService(FakeMetaRepository())
 
-    with pytest.raises(SchemaLinkError, match="暂不支持"):
-        asyncio.run(service.link(intent, make_evidence()))
+    with pytest.raises(
+        SchemaLinkError,
+        match="当前仅支持按月份分组",
+    ):
+        asyncio.run(
+            service.link(intent, make_evidence())
+        )
+
 
 
 def test_unresolved_filter_rejected():
@@ -202,3 +241,29 @@ def test_unresolved_filter_rejected():
         asyncio.run(
             service.link(make_intent(), evidence)
         )
+
+
+def test_monthly_group_adds_date_join():
+    intent = make_intent()
+    intent["group_by"] = ["月份"]
+
+    service = SchemaLinkService(FakeMetaRepository())
+
+    plan = asyncio.run(
+        service.link(intent, make_evidence())
+    )
+
+    assert plan["group_by"] == [
+        "dim_date.year",
+        "dim_date.month",
+    ]
+
+    assert "dim_date" in plan["required_tables"]
+
+    assert any(
+        join["left_column"] == "date_id"
+        and join["right_table"] == "dim_date"
+        and join["right_column"] == "date_id"
+        for join in plan["joins"]
+    )
+

@@ -169,3 +169,65 @@ def test_unexpected_result_column_rejected(schema_plan):
         asyncio.run(
             executor.execute_plan(schema_plan)
         )
+
+
+class FakeGroupedResult:
+    def keys(self):
+        return ["year", "month", "total_sales"]
+
+    def mappings(self):
+        return self
+
+    def fetchmany(self, size):
+        return [
+            {
+                "year": 2025,
+                "month": 1,
+                "total_sales": Decimal("1000.00"),
+            },
+            {
+                "year": 2025,
+                "month": 2,
+                "total_sales": Decimal("2000.00"),
+            },
+        ]
+
+
+def test_grouped_query_returns_rows(schema_plan):
+    plan = deepcopy(schema_plan)
+
+    plan["group_by"] = [
+        "dim_date.year",
+        "dim_date.month",
+    ]
+
+    plan["required_tables"].append("dim_date")
+
+    plan["joins"].append({
+        "left_table": "fact_order",
+        "left_column": "date_id",
+        "right_table": "dim_date",
+        "right_column": "date_id",
+    })
+
+    engine = FakeEngine(FakeGroupedResult())
+    executor = QueryExecutor(engine)
+
+    result = asyncio.run(
+        executor.execute_plan(plan)
+    )
+
+    assert result.value is None
+
+    assert result.rows == [
+        {
+            "year": 2025,
+            "month": 1,
+            "total_sales": "1000.00",
+        },
+        {
+            "year": 2025,
+            "month": 2,
+            "total_sales": "2000.00",
+        },
+    ]
