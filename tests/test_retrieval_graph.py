@@ -21,17 +21,41 @@ class FakeVectorService:
         ]
 
 
+
 class FakeValueClient:
-    async def search(self, query: str, limit: int = 5):
-        if query == "华北":
-            return [{
-                "_score": 3.0,
-                "_source": {
-                    "field_id": "dim_region.region_name",
-                    "value": "华北",
-                },
-            }]
-        return []
+    DATA = {
+        "华北": ("dim_region.region_name", "华北"),
+        "华南": ("dim_region.region_name", "华南"),
+        "苹果": ("dim_product.brand", "苹果"),
+        "黄金": ("dim_customer.member_level", "黄金"),
+    }
+
+    async def search_exact(
+        self,
+        value: str,
+        field_ids: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        # 模拟数据库中不存在该值
+        item = self.DATA.get(value)
+
+        if item is None:
+            return []
+
+        field_id, actual_value = item
+
+        # 模拟 Elasticsearch 的字段白名单过滤
+        if field_ids is not None and field_id not in field_ids:
+            return []
+
+        # 模拟真实 Elasticsearch 响应结构
+        return [{
+            "_source": {
+                "field_id": field_id,
+                "value": actual_value,
+            }
+        }]
+
 
 
 def test_retrieval_finds_metric_and_region():

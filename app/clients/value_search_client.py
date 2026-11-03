@@ -86,3 +86,32 @@ class ValueSearchClient:
         )
 
         return response["hits"]["hits"]
+
+
+    async def search_exact(
+        self,
+        value: str,
+        field_ids: list[str] | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        filters = [{"term": {"value": value}}]
+
+        if field_ids is not None:
+            if not field_ids:
+                return []
+
+            filters.append({
+                "terms": {"field_id": field_ids}
+            })
+
+        response = await self.client.search(
+            index=self.INDEX,
+            size=limit,
+            query={
+                "bool": {
+                    "filter": filters
+                }
+            },
+        )
+
+        return response["hits"]["hits"]

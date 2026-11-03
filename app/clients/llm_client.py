@@ -44,12 +44,15 @@ class LLMClient:
     def __init__(self):
         base_url = os.getenv("LLM_BASE_URL")
         model = os.getenv("LLM_MODEL")
-        api_key = os.getenv("LLM_API_KEY")
+        api_key = os.getenv("DASHSCOPE_API_KEY")
 
-        if not base_url or not model or not api_key:
-            raise RuntimeError(
-                "缺少 LLM_BASE_URL、LLM_MODEL 或 LLM_API_KEY"
-            )
+        self.model = model
+
+        self.client = httpx.AsyncClient(
+            base_url=base_url.rstrip("/") + "/",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
 
         self.model = model
         self.client = httpx.AsyncClient(
@@ -69,12 +72,24 @@ class LLMClient:
             json={
                 "model": self.model,
                 "temperature": 0,
+                "stream": False,
+                "enable_thinking": False,
+                "response_format": {
+                    "type": "json_object"
+                },
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": question},
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT,
+                    },
+                    {
+                        "role": "user",
+                        "content": question,
+                    },
                 ],
             },
         )
+
         response.raise_for_status()
 
         content = response.json()["choices"][0]["message"]["content"]

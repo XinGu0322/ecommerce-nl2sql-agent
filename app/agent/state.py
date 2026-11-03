@@ -4,6 +4,7 @@ from typing import Any, TypedDict
 
 class QueryState(TypedDict, total=False):
     question: str
+    intent: dict[str, Any]
     search_terms: list[str]
 
     metadata_hits: list[dict[str, Any]]
