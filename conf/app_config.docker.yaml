@@ -1,0 +1,24 @@
+
+app:
+  name: ecommerce-nl2sql-agent
+  environment: development
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+mysql:
+  host: host.docker.internal
+  port: 3307
+
+qdrant:
+  host: host.docker.internal
+  port: 6333
+
+elasticsearch:
+  host: host.docker.internal
+  port: 9200
+
+embedding:
+  base_url: http://host.docker.internal:8081
+  dimensions: 1024

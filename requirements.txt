@@ -1,0 +1,14 @@
+
+fastapi
+uvicorn
+pydantic
+PyYAML
+python-dotenv
+httpx
+SQLAlchemy[asyncio]
+asyncmy
+qdrant-client
+elasticsearch[async]
+langgraph
+langchain-core
+sqlglot
