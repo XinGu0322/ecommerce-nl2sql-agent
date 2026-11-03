@@ -217,4 +217,23 @@ class MetaRepository:
         return sources
 
 
+    async def get_metric_dependencies(
+        self,
+        metric_id: str,
+    ) -> list[str]:
+        sql = text("""
+            SELECT column_id
+            FROM column_metric
+            WHERE metric_id = :metric_id
+            ORDER BY column_id
+        """)
+
+        async with self.meta_engine.connect() as connection:
+            result = await connection.execute(
+                sql,
+                {"metric_id": metric_id},
+            )
+            return list(result.scalars())
+
+
 
