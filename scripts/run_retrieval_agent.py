@@ -13,6 +13,9 @@ from app.config import load_config
 from app.repositories.meta_repository import MetaRepository
 from app.services.meta_vector_service import MetaVectorService
 from app.services.schema_link_service import SchemaLinkService
+from app.services.sql_compiler import compile_schema_plan
+from app.services.sql_validator import validate_sql
+
 
 async def main() -> None:
     config = load_config()
@@ -97,6 +100,23 @@ async def main() -> None:
             result["intent"],
             evidence,
         )
+
+        # 将 Schema Plan 编译为参数化 SQL
+        compiled_query = compile_schema_plan(schema_plan)
+
+        # 验证 SQL 与业务计划的一致性
+        validated_query = validate_sql(
+            compiled_query.sql,
+            schema_plan,
+        )
+
+        print("\n========== SQL 编译结果 ==========")
+        print(validated_query.sql)
+
+        print("\n绑定参数：")
+        print(validated_query.params)
+
+        print("\nSQL 编译与校验通过")
 
         print("\n========== Schema Linking ==========")
 
