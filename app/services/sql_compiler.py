@@ -1,7 +1,11 @@
-MAX_GROUP_ROWS = 100
 
 import re
 from dataclasses import dataclass
+
+from app.services.grouping_contract import GROUP_FIELDS
+
+
+MAX_GROUP_ROWS = 100
 
 
 IDENTIFIER_PATTERN = re.compile(
@@ -17,7 +21,7 @@ METRIC_PATTERN = re.compile(
 
 
 class SQLCompilationError(ValueError):
-    pass
+    """Schema Plan 无法安全编译为 SQL。"""
 
 
 @dataclass(frozen=True)
@@ -27,7 +31,7 @@ class BoundQuery:
 
 
 def quote_identifier(name: str) -> str:
-    """只允许简单 SQL 标识符。"""
+    """安全引用 MySQL 标识符。"""
 
     if (
         not isinstance(name, str)
@@ -41,7 +45,11 @@ def quote_identifier(name: str) -> str:
 
 
 def quote_field(field_id: str) -> str:
-    """将 table.column 转换为安全的限定字段名。"""
+    """
+    将 table.column 转换为：
+
+    `table`.`column`
+    """
 
     if (
         not isinstance(field_id, str)
@@ -60,7 +68,22 @@ def quote_field(field_id: str) -> str:
 
 
 def compile_schema_plan(plan: dict) -> BoundQuery:
-    """将已验证的 Schema Plan 编译为参数化 SELECT。"""
+    """
+    将受控 Schema Plan 编译为参数化 MySQL SELECT。
+
+    当前支持：
+    1. SUM / COUNT 单字段指标
+    2. 事实表与维度表直接 JOIN
+    3. 字符串等值筛选
+    4. 年月分组
+    5. 品牌分组
+    6. 聚合指标排序
+    7. Top N
+    """
+
+    # ==================================================
+    # 1. 读取基础业务计划
+    # ==================================================
 
     fact_table = plan["fact_table"]
     metric = plan["metric"]
@@ -68,9 +91,14 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
     fact_sql = quote_identifier(fact_table)
     metric_id = quote_identifier(metric["id"])
 
-    # 1. 严格限定支持的指标表达式
+    # ==================================================
+    # 2. 严格限定支持的指标表达式
+    # ==================================================
+
     expression = re.sub(
-        r"\s+", "", metric["expression"]
+        r"\s+",
+        "",
+        metric["expression"],
     )
 
     match = METRIC_PATTERN.fullmatch(expression)
@@ -80,9 +108,15 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
             "当前仅支持 SUM/COUNT 单字段聚合"
         )
 
-    function, metric_table, metric_column = match.groups()
+    (
+        function,
+        metric_table,
+        metric_column,
+    ) = match.groups()
 
-    metric_field = f"{metric_table}.{metric_column}"
+    metric_field = (
+        f"{metric_table}.{metric_column}"
+    )
 
     if metric_table != fact_table:
         raise SQLCompilationError(
@@ -99,12 +133,19 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
         f"{quote_field(metric_field)})"
     )
 
+    # ==================================================
+    # 3. 构建基础 SELECT 和 FROM
+    # ==================================================
+
     sql_parts = [
         f"SELECT {metric_sql} AS {metric_id}",
         f"FROM {fact_sql}",
     ]
 
-    # 2. 根据 Schema Plan 构建 JOIN
+    # ==================================================
+    # 4. 根据 Schema Plan 构建 JOIN
+    # ==================================================
+
     joins = plan["joins"]
     joined_tables = {fact_table}
 
@@ -123,19 +164,27 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
             )
 
         left_field = (
-            f"{left_table}.{join['left_column']}"
+            f"{left_table}."
+            f"{join['left_column']}"
         )
+
         right_field = (
-            f"{right_table}.{join['right_column']}"
+            f"{right_table}."
+            f"{join['right_column']}"
         )
 
         sql_parts.append(
-            f"INNER JOIN {quote_identifier(right_table)} "
+            f"INNER JOIN "
+            f"{quote_identifier(right_table)} "
             f"ON {quote_field(left_field)} "
             f"= {quote_field(right_field)}"
         )
 
         joined_tables.add(right_table)
+
+    # ==================================================
+    # 5. 检查 JOIN 是否与业务计划一致
+    # ==================================================
 
     required_tables = plan["required_tables"]
 
@@ -147,7 +196,10 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
             "JOIN 表与查询计划中的所需表不一致"
         )
 
-    # 3. 构建参数化 WHERE 条件
+    # ==================================================
+    # 6. 构建参数化 WHERE 条件
+    # ==================================================
+
     conditions = []
     params = {}
 
@@ -159,7 +211,8 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
 
         if table_name not in joined_tables:
             raise SQLCompilationError(
-                f"筛选字段所属表未参与查询：{field_id}"
+                "筛选字段所属表未参与查询："
+                f"{field_id}"
             )
 
         value = item["value"]
@@ -182,51 +235,165 @@ def compile_schema_plan(plan: dict) -> BoundQuery:
             "WHERE " + " AND ".join(conditions)
         )
 
+    # ==================================================
+    # 7. 读取分组、排序和 Top N 计划
+    # ==================================================
 
-    # 4. 处理年月分组
     group_by = plan.get("group_by") or []
+    sort = plan.get("sort")
+    limit = plan.get("limit")
+
+    if not isinstance(group_by, list):
+        raise SQLCompilationError(
+            "分组字段必须为列表"
+        )
+
+    # ==================================================
+    # 8. 分组聚合查询
+    # ==================================================
 
     if group_by:
-        expected_group = [
-            "dim_date.year",
-            "dim_date.month",
+        # 只能使用预先定义的合法分组字段组合
+        allowed_groups = set(
+            GROUP_FIELDS.values()
+        )
+
+        if tuple(group_by) not in allowed_groups:
+            raise SQLCompilationError(
+                "不支持的分组字段组合"
+            )
+
+        # ----------------------------------------------
+        # 8.1 校验分组字段是否参与 JOIN
+        # ----------------------------------------------
+
+        for field_id in group_by:
+            table_name = field_id.split(".")[0]
+
+            if table_name not in joined_tables:
+                raise SQLCompilationError(
+                    "分组字段所属表未参与 JOIN："
+                    f"{field_id}"
+                )
+
+        # ----------------------------------------------
+        # 8.2 构建通用 SELECT 维度字段
+        # ----------------------------------------------
+
+        dimension_selects = []
+        dimension_names = []
+
+        for field_id in group_by:
+            column_name = field_id.split(".")[1]
+
+            dimension_names.append(column_name)
+
+            dimension_selects.append(
+                f"{quote_field(field_id)} "
+                f"AS {quote_identifier(column_name)}"
+            )
+
+        # 防止分组字段名和指标别名冲突
+        result_columns = (
+            dimension_names + [metric["id"]]
+        )
+
+        if len(result_columns) != len(set(result_columns)):
+            raise SQLCompilationError(
+                "分组结果存在重复的输出字段名"
+            )
+
+        sql_parts[0] = (
+            "SELECT "
+            + ", ".join(dimension_selects)
+            + f", {metric_sql} AS {metric_id}"
+        )
+
+        # ----------------------------------------------
+        # 8.3 GROUP BY
+        # ----------------------------------------------
+
+        group_fields_sql = [
+            quote_field(field_id)
+            for field_id in group_by
         ]
 
-        if group_by != expected_group:
-            raise SQLCompilationError(
-                "当前仅支持按年份和月份分组"
+        sql_parts.append(
+            "GROUP BY "
+            + ", ".join(group_fields_sql)
+        )
+
+        # ----------------------------------------------
+        # 8.4 ORDER BY
+        # ----------------------------------------------
+
+        dimension_order = ", ".join(
+            f"{quote_field(field_id)} ASC"
+            for field_id in group_by
+        )
+
+        if sort is None:
+            # 未指定排名时，按分组维度自然升序
+            order_sql = dimension_order
+
+        elif sort in ("asc", "desc"):
+            # 按聚合指标排序；
+            # 使用维度字段作为同分时的稳定排序依据
+            order_sql = (
+                f"{metric_id} {sort.upper()}, "
+                + dimension_order
             )
 
-        if "dim_date" not in joined_tables:
+        else:
             raise SQLCompilationError(
-                "月份分组缺少 dim_date JOIN"
+                "不合法的排序方向"
             )
 
-        year_field = quote_field("dim_date.year")
-        month_field = quote_field("dim_date.month")
-
-        # 原先 SELECT 只有一个指标；
-        # 分组查询需要同时返回年份、月份和指标。
-        sql_parts[0] = (
-            f"SELECT {year_field} AS `year`, "
-            f"{month_field} AS `month`, "
-            f"{metric_sql} AS {metric_id}"
+        sql_parts.append(
+            f"ORDER BY {order_sql}"
         )
+
+        # ----------------------------------------------
+        # 8.5 LIMIT
+        # ----------------------------------------------
+
+        if limit is None:
+            # 普通分组查询最多允许返回100行
+            # 多取1行用于判断是否超出结果限制
+            effective_limit = MAX_GROUP_ROWS + 1
+
+        else:
+            if (
+                type(limit) is not int
+                or not 1 <= limit <= MAX_GROUP_ROWS
+            ):
+                raise SQLCompilationError(
+                    "Top N 数量超出允许范围"
+                )
+
+            if sort is None:
+                raise SQLCompilationError(
+                    "Top N 缺少明确排序方向"
+                )
+
+            effective_limit = limit
 
         sql_parts.append(
-            f"GROUP BY {year_field}, {month_field}"
+            f"LIMIT {effective_limit}"
         )
 
-        sql_parts.append(
-            f"ORDER BY {year_field} ASC, "
-            f"{month_field} ASC"
+    # ==================================================
+    # 9. 非分组查询不得携带排序或 Top N
+    # ==================================================
+
+    elif sort is not None or limit is not None:
+        raise SQLCompilationError(
+            "非分组查询不允许排序或 Top N"
         )
 
-        # 多取一行，方便执行器判断是否超过上限
-        sql_parts.append(
-            f"LIMIT {MAX_GROUP_ROWS + 1}"
-        )
-
+    # ==================================================
+    # 10. 返回绑定参数与 SQL
+    # ==================================================
 
     return BoundQuery(
         sql="\n".join(sql_parts),
