@@ -8,6 +8,8 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 
 from app.api.routes import router
+from app.api.streaming import router as stream_router
+
 from app.api.security import (
     SlidingWindowRateLimiter,
     load_service_api_key,
@@ -112,6 +114,7 @@ def create_app(
         # 每次请求均由服务端生成独立编号
         request_id = uuid4().hex
 
+        request.state.request_id = request_id
         token = set_request_id(request_id)
 
         started = perf_counter()
@@ -158,6 +161,9 @@ def create_app(
 
     # 5. 注册 API 路由
     app.include_router(router)
+    app.include_router(stream_router)
+
+    # 6. 存活探针
 
     # 6. 存活探针
     @app.get(
