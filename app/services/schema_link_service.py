@@ -10,7 +10,7 @@ class SchemaLinkError(ValueError):
 
 
 def parse_aliases(value) -> list[str]:
-    """解析数据库中保存的指标别名。"""
+    """解析指标别名。"""
 
     if value is None:
         return []
@@ -28,24 +28,24 @@ class SchemaLinkService:
     def __init__(self, repository: MetaRepository):
         self.repository = repository
 
-    async def link(self, intent: dict, evidence: dict) -> dict:
+    async def link(
+        self,
+        intent: dict,
+        evidence: dict,
+    ) -> dict:
         """
-        根据 LLM 意图和检索证据生成可信的 Schema Plan。
+        根据用户意图和检索证据生成 Schema Plan。
 
-        负责：
-        1. 检查歧义和业务能力边界
-        2. 确定唯一业务指标
-        3. 验证筛选实体
-        4. 确定分组、排序及 Top N
-        5. 基于真实外键规划 JOIN
-
-        不在此阶段生成或执行 SQL。
+        支持：
+        - 指标名称和别名匹配
+        - 单值筛选
+        - 同字段多值筛选
+        - 月份、品牌、地区分组
+        - 聚合排序及 Top N
+        - 基于真实外键的 JOIN 规划
         """
 
-        # ==================================================
-        # 1. 检查查询条件是否存在缺失或歧义
-        # ==================================================
-
+        # 1. 检查查询条件
         if (
             intent.get("needs_clarification")
             or evidence.get("unresolved_terms")
@@ -55,27 +55,27 @@ class SchemaLinkService:
                 "查询条件存在缺失或歧义"
             )
 
-        # 当前阶段暂不支持独立的时间范围过滤
         if intent.get("time_expression"):
             raise SchemaLinkError(
                 "当前阶段暂不支持时间范围过滤"
             )
 
-        # ==================================================
-        # 2. 解析分组字段
-        # ==================================================
-
+        # 2. 解析分组要求
         requested_groups = intent.get("group_by") or []
+
+        if not isinstance(requested_groups, list):
+            raise SchemaLinkError(
+                "分组表达格式不正确"
+            )
 
         if requested_groups:
             if (
-                not isinstance(requested_groups, list)
-                or len(requested_groups) != 1
+                len(requested_groups) != 1
                 or requested_groups[0] not in GROUP_FIELDS
             ):
                 raise SchemaLinkError(
-                    "当前仅支持按月份分组或品牌分组："
-                    f"{requested_groups}"
+                    "当前仅支持按月份分组、品牌分组"
+                    f"或地区分组：{requested_groups}"
                 )
 
             group_by = list(
@@ -84,10 +84,7 @@ class SchemaLinkService:
         else:
             group_by = []
 
-        # ==================================================
-        # 3. 校验排序和 Top N
-        # ==================================================
-
+        # 3. 排序与 Top N 校验
         sort = intent.get("sort")
         limit = intent.get("limit")
 
@@ -105,7 +102,6 @@ class SchemaLinkService:
                     "Top N 数量必须为1到100之间的整数"
                 )
 
-        # 暂时只支持对分组聚合结果进行排序
         if (
             (sort is not None or limit is not None)
             and not group_by
@@ -114,16 +110,12 @@ class SchemaLinkService:
                 "排序和 Top N 目前只支持分组聚合"
             )
 
-        # 有 Top N 时，必须知道按什么方向排名
         if limit is not None and sort is None:
             raise SchemaLinkError(
                 "Top N 查询必须明确排序方向"
             )
 
-        # ==================================================
-        # 4. 加载真实业务元数据
-        # ==================================================
-
+        # 4. 加载数据库元数据
         sources = await self.repository.get_index_sources()
 
         tables = {
@@ -136,10 +128,7 @@ class SchemaLinkService:
             for item in sources["column"]
         }
 
-        # ==================================================
-        # 5. 根据指标名称和别名确定唯一指标
-        # ==================================================
-
+        # 5. 匹配唯一业务指标
         metric_name = (
             intent.get("metric") or ""
         ).strip()
@@ -165,10 +154,7 @@ class SchemaLinkService:
 
         metric = metric_matches[0]
 
-        # ==================================================
-        # 6. 根据指标依赖确定事实表
-        # ==================================================
-
+        # 6. 从指标依赖确定事实表
         dependencies = await (
             self.repository.get_metric_dependencies(
                 metric["id"]
@@ -208,31 +194,24 @@ class SchemaLinkService:
                 "指标依赖无法确定有效事实表"
             )
 
-        # ==================================================
-        # 7. 验证并整理用户筛选实体
-        # ==================================================
-
-        filters = []
-        seen = set()
-
+        # 7. 逐个验证筛选实体，并按字段归并
         resolutions = evidence.get(
             "filter_resolutions", []
         )
 
+        field_values: dict[str, list[str]] = {}
+
         for mention in intent.get("filters", []):
             matches = {
-                (
-                    item["field_id"],
-                    item["value"],
-                )
+                (item["field_id"], item["value"])
                 for item in resolutions
                 if (
                     item["term"] == mention["text"]
-                    and item["category"]
-                    == mention["category"]
+                    and item["category"] == mention["category"]
                 )
             }
 
+            # 一个原始实体必须唯一映射到一个字段和值
             if len(matches) != 1:
                 raise SchemaLinkError(
                     "筛选实体无法唯一对齐："
@@ -246,29 +225,56 @@ class SchemaLinkService:
                     f"筛选字段不存在：{field_id}"
                 )
 
-            key = (field_id, value)
+            if not isinstance(value, str) or not value:
+                raise SchemaLinkError(
+                    "筛选取值格式不正确"
+                )
 
-            if key not in seen:
-                seen.add(key)
+            values = field_values.setdefault(
+                field_id, []
+            )
+
+            # 同字段同取值去重
+            if value not in values:
+                values.append(value)
+
+        # 8. 生成统一筛选计划
+        filters = []
+
+        for field_id, values in field_values.items():
+
+            if len(values) > 10:
+                raise SchemaLinkError(
+                    "同一筛选字段最多允许10个取值"
+                )
+
+            if len(values) == 1:
+                # 保留原来的单值结构
+                filters.append({
+                    "field_id": field_id,
+                    "value": values[0],
+                })
+
+            else:
+                # 当前多值场景要求按该字段分别统计
+                if field_id not in group_by:
+                    raise SchemaLinkError(
+                        "多值对比必须按对应字段分组："
+                        f"{field_id}"
+                    )
 
                 filters.append({
                     "field_id": field_id,
-                    "value": value,
+                    "values": values,
                 })
 
-        # ==================================================
-        # 8. 根据筛选字段确定需要连接的表
-        # ==================================================
-
+        # 9. 根据筛选字段确定所需维度表
         target_tables = {
             columns[item["field_id"]]["table_id"]
             for item in filters
         } - {fact_table}
 
-        # ==================================================
-        # 9. 分组字段同样参与 JOIN 规划
-        # ==================================================
-
+        # 分组字段也必须加入所需表
         for field_id in group_by:
             if field_id not in columns:
                 raise SchemaLinkError(
@@ -280,13 +286,11 @@ class SchemaLinkService:
             if table_id != fact_table:
                 target_tables.add(table_id)
 
-        # ==================================================
-        # 10. 根据真实外键关系规划 JOIN
-        # ==================================================
-
+        # 10. 基于元数据中的外键规划 JOIN
         joins = []
 
         for target_table in sorted(target_tables):
+
             candidates = [
                 column
                 for column in columns.values()
@@ -313,8 +317,7 @@ class SchemaLinkService:
 
             if referenced_id not in columns:
                 raise SchemaLinkError(
-                    "外键目标字段不存在："
-                    f"{referenced_id}"
+                    f"外键目标字段不存在：{referenced_id}"
                 )
 
             joins.append({
@@ -324,10 +327,7 @@ class SchemaLinkService:
                 "right_column": fk["referenced_column"],
             })
 
-        # ==================================================
-        # 11. 输出结构化 Schema Plan
-        # ==================================================
-
+        # 11. 输出完整 Schema Plan
         return {
             "metric": {
                 "id": metric["id"],
