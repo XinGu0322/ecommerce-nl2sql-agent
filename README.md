@@ -74,9 +74,9 @@ flowchart LR
     client["HTTP 调用方 / Swagger"]
     subgraph api_service["API 容器：compose.api.yaml"]
         api["FastAPI<br/>鉴权 · 限流 · SSE · 追踪"]
-        graph["LangGraph<br/>意图与检索 · Schema Linking"]
+        agent_flow["LangGraph<br/>意图与检索 · Schema Linking"]
         execute["SQL 编译 · AST 校验<br/>只读执行"]
-        api --> graph --> execute
+        api --> agent_flow --> execute
     end
     subgraph existing["已有基础设施与外部服务"]
         llm["Qwen 兼容模型接口"]
@@ -86,15 +86,15 @@ flowchart LR
         mysql[("MySQL<br/>meta 元数据 / dw 业务数据")]
     end
     client --> api
-    graph --> llm
-    graph --> tei
-    graph --> qdrant
-    graph --> es
-    graph --> mysql
+    agent_flow --> llm
+    agent_flow --> tei
+    agent_flow --> qdrant
+    agent_flow --> es
+    agent_flow --> mysql
     execute --> mysql
     classDef service fill:#dbeafe,stroke:#2563eb,color:#1e3a5f
     classDef data fill:#dcfce7,stroke:#16a34a,color:#14532d
-    class api,graph,execute service
+    class api,agent_flow,execute service
     class qdrant,es,mysql data
 ```
 
