@@ -165,3 +165,56 @@ class MetaRepository:
         return sources
 
 
+    async def get_dw_distinct_values(self) -> dict[str, list[str]]:
+        """读取允许建立检索索引的维度字段取值。"""
+
+        queries = {
+            "dim_region.region_name": """
+                SELECT DISTINCT region_name AS value
+                FROM dim_region
+                WHERE region_name IS NOT NULL
+            """,
+            "dim_region.province": """
+                SELECT DISTINCT province AS value
+                FROM dim_region
+                WHERE province IS NOT NULL
+            """,
+            "dim_product.product_name": """
+                SELECT DISTINCT product_name AS value
+                FROM dim_product
+                WHERE product_name IS NOT NULL
+            """,
+            "dim_product.category": """
+                SELECT DISTINCT category AS value
+                FROM dim_product
+                WHERE category IS NOT NULL
+            """,
+            "dim_product.brand": """
+                SELECT DISTINCT brand AS value
+                FROM dim_product
+                WHERE brand IS NOT NULL
+            """,
+            "dim_customer.member_level": """
+                SELECT DISTINCT member_level AS value
+                FROM dim_customer
+                WHERE member_level IS NOT NULL
+            """,
+        }
+
+        sources = {}
+
+        async with self.dw_engine.connect() as connection:
+            for field_id, sql in queries.items():
+                result = await connection.execute(text(sql))
+
+                sources[field_id] = sorted({
+                    str(row[0]).strip()
+                    for row in result
+                    if row[0] is not None
+                    and str(row[0]).strip()
+                })
+
+        return sources
+
+
+
